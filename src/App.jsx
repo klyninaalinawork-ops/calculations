@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 
 const STATUSES = ["Нова", "В роботі", "На перевірці", "Погоджено"];
 const STATUS_CLASS = {
@@ -66,14 +67,23 @@ function toCsvCell(value) {
 }
 
 function downloadCsv(rows) {
-  const headers = ["Контрагент", "Товар", "Період", "Обсяг, т", "Повні витрати на 1 т, грн", "Прибуток на 1 т, грн", "Рентабельність, %", "Статус", "Нотатка"];
+  const headers = ["Контрагент", "Товар", "SKU", "Період", "Обсяг, т", "Склад сировини по SKU", "Сировина разом, кг", "Ціна сировини за кг, грн", "Вартість сировини, грн", "Упаковка по SKU", "Упаковка разом, шт", "Ціна упаковки за шт, грн", "Вартість упаковки, грн", "Повні витрати на 1 т, грн", "Прибуток на 1 т, грн", "Рентабельність, %", "Статус", "Нотатка"];
   const content = [
     headers,
     ...rows.map(({ record, management }) => [
       record.client,
       record.product,
+      record.product,
       record.period,
       record.metrics.volume,
+      (record.materials?.items ?? []).filter((item) => item.type === "raw").map((item) => `${item.name}: ${item.quantity} кг × ${item.price ?? ""} грн/кг = ${item.cost ?? ""} грн`).join(" | "),
+      record.materials?.rawQuantityKg ?? "",
+      record.materials?.rawPricePerKg ?? "",
+      record.materials?.rawCost ?? "",
+      (record.materials?.items ?? []).filter((item) => item.type === "packaging").map((item) => `${item.name}: ${item.quantity} шт × ${item.price ?? ""} грн/шт = ${item.cost ?? ""} грн`).join(" | "),
+      record.materials?.packagingQuantity ?? "",
+      record.materials?.packagingPrice ?? "",
+      record.materials?.packagingCost ?? "",
       record.metrics.fullCost,
       record.metrics.profit,
       record.metrics.margin,
@@ -86,6 +96,145 @@ function downloadCsv(rows) {
   link.download = "kalkulyatsiyi.csv";
   link.click();
   URL.revokeObjectURL(link.href);
+}
+
+function parseExcelNumber(value) {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = Number(value.trim().replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCalculationWorkbook(file, workbook) {
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!sheet) throw new Error(`У файлі ${file.name} немає аркуша.`);
+
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const starts = rows
+    .map((row, index) => (String(row[1] ?? "").trim() === "Калькуляція" ? index : -1))
+    .filter((index) => index >= 0);
+  if (!starts.length) throw new Error(`У файлі ${file.name} не знайдено розділів «Калькуляція».`);
+
+  const client = file.name
+    .replace(/\.xlsx$/i, "")
+    .replace(/^Калькуляція\s*/i, "")
+    .trim();
+
+  return starts.map((start, calculationIndex) => {
+    const end = starts[calculationIndex + 1] ?? rows.length;
+    const section = rows.slice(start, end);
+    const product = String(section[1]?.[1] ?? "").trim();
+    if (!product) throw new Error(`У файлі ${file.name} не вдалося прочитати назву товару.`);
+
+    const valuesByLabel = {};
+    const costItems = [];
+    section.forEach((row) => {
+      const label = String(row[1] ?? "").trim();
+      const cleanLabel = label.replace(/:$/, "").trim();
+      const value = parseExcelNumber(row[3]);
+      if (cleanLabel) valuesByLabel[cleanLabel] = value;
+      if (label.startsWith("23 ") && value !== null) {
+        costItems.push({ label, value });
+      }
+    });
+
+    const metrics = {
+      volume: valuesByLabel["Випуск продукції"] ?? null,
+      productionCost: valuesByLabel["Виробнича собівартість"] ?? null,
+      fullCost: valuesByLabel["Повні витрати"] ?? null,
+      profit: valuesByLabel["Прибуток (+) Збитки (-)"] ?? null,
+      margin: valuesByLabel["Рентабельність"] ?? null,
+      wholesalePrice: valuesByLabel["Оптова вартість"] ?? null,
+      retailPrice: valuesByLabel["Відпускна вартість"] ?? null,
+    };
+    if ([metrics.volume, metrics.fullCost, metrics.profit].some((value) => value === null)) {
+      throw new Error(`У файлі ${file.name} не вдалося прочитати обов'язкові показники: ${product}`);
+    }
+
+    const period = String(section[5]?.[1] ?? "").split(" - ")[0].trim();
+    const entity = String(section[2]?.[2] ?? "").trim();
+    const stem = file.name.replace(/\.xlsx$/i, "");
+    let rawQuantityKg = 0;
+    let rawCost = 0;
+    let packagingQuantity = 0;
+    let packagingCost = 0;
+    let hasRawQuantity = false;
+    let hasPackagingQuantity = false;
+    let currentCategory = "";
+    let currentItem = "";
+    let pendingItem = null;
+    const materialItems = [];
+    section.forEach((row) => {
+      const label = String(row[1] ?? "").trim();
+      const unit = String(row[2] ?? "").trim().toLocaleLowerCase("uk");
+      const value = parseExcelNumber(row[3]);
+      if (label.startsWith("23 ")) {
+        currentCategory = label;
+        currentItem = "";
+        pendingItem = null;
+      } else if (label === "Количество" && value !== null) {
+        const isPackaging = currentCategory.toLocaleLowerCase("uk").includes("упаков");
+        if (currentItem) {
+          pendingItem = {
+            name: currentItem,
+            type: isPackaging ? "packaging" : "raw",
+            quantity: value,
+            unit: isPackaging ? "шт" : "кг",
+            price: null,
+            cost: null,
+          };
+        }
+        if (isPackaging) {
+          packagingQuantity += value;
+          hasPackagingQuantity = true;
+        } else if (unit === "кг") {
+          rawQuantityKg += value;
+          hasRawQuantity = true;
+        }
+      } else if (label === "Цена" && value !== null && pendingItem) {
+        pendingItem.price = value;
+      } else if (label === "Сумма" && value !== null) {
+        if (currentCategory.toLocaleLowerCase("uk").includes("упаков")) {
+          packagingCost += value;
+        } else if (/^23 /.test(currentCategory) && !/(упаков|оплата праці|єсв|газ|електро|амортизац|енерг|збут|адміністратив)/i.test(currentCategory)) {
+          rawCost += value;
+        }
+        if (pendingItem) {
+          pendingItem.cost = value;
+          materialItems.push(pendingItem);
+          pendingItem = null;
+        }
+      } else if (label && !label.startsWith("24 ") && !label.startsWith("Показник")) {
+        const original = String(row[1] ?? "");
+        if (/^\s/.test(original) || original.startsWith("   ")) currentItem = original.trim();
+        else if (!label.startsWith("23 ")) currentItem = "";
+      }
+    });
+    const materials = {
+      items: materialItems,
+      rawQuantityKg: hasRawQuantity ? rawQuantityKg : null,
+      rawCost: rawCost || null,
+      rawPricePerKg: hasRawQuantity && rawQuantityKg ? rawCost / rawQuantityKg : null,
+      packagingQuantity: hasPackagingQuantity ? packagingQuantity : null,
+      packagingUnit: "шт",
+      packagingCost: packagingCost || null,
+      packagingPrice: hasPackagingQuantity && packagingQuantity ? packagingCost / packagingQuantity : null,
+    };
+
+    return {
+      id: `${stem}-${calculationIndex + 1}`,
+      client,
+      entity,
+      product,
+      period,
+      source: file.name,
+      metrics,
+      materials,
+      costItems: costItems
+        .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+        .slice(0, 8),
+    };
+  });
 }
 
 function DetailsPanel({ item, onClose, updateManagement }) {
@@ -115,6 +264,41 @@ function DetailsPanel({ item, onClose, updateManagement }) {
           {record.costItems.length ? record.costItems.map((cost) => (
             <div className="cost-line" key={cost.label}><span>{cost.label.replace(/^\d+\s*/, "")}</span><strong>{formatMoney(cost.value)}</strong></div>
           )          ) : <p className="empty-copy">Немає деталізації статей витрат.</p>}
+        </section>
+        <section className="panel-section">
+          <div className="section-title">Сировина та упаковка <span>по SKU</span></div>
+          {record.materials?.items?.length ? (
+            <div className="materials-table" role="table" aria-label="Склад сировини та упаковки">
+              <div className="materials-table-head" role="row">
+                <span role="columnheader">Найменування</span>
+                <span role="columnheader">Кількість</span>
+                <span role="columnheader">Ціна</span>
+                <span role="columnheader">Вартість</span>
+              </div>
+              {record.materials.items.map((item, index) => (
+                <div className="materials-table-row" role="row" key={`${item.name}-${index}`}>
+                  <span role="cell"><span className={`material-type ${item.type}`}>{item.type === "packaging" ? "Упак." : "Сир."}</span>{item.name}</span>
+                  <strong role="cell">{decimal.format(item.quantity)} {item.unit}</strong>
+                  <strong role="cell">{item.price != null ? `${decimal.format(item.price)} ₴/${item.unit}` : "—"}</strong>
+                  <strong role="cell">{item.cost != null ? formatMoney(item.cost) : "—"}</strong>
+                </div>
+              ))}
+            </div>
+          ) : <p className="empty-copy">Немає деталізації сировини та упаковки.</p>}
+          {record.materials?.rawQuantityKg != null ? (
+            <div className="material-summary">
+              <div><span>Сировина</span><strong>{decimal.format(record.materials.rawQuantityKg)} кг</strong></div>
+              <div><span>Ціна за кг</span><strong>{formatMoney(record.materials.rawPricePerKg)}</strong></div>
+              <div><span>Вартість сировини</span><strong>{formatMoney(record.materials.rawCost)}</strong></div>
+            </div>
+          ) : <p className="empty-copy">Немає кількості сировини в кг.</p>}
+          {record.materials?.packagingQuantity != null ? (
+            <div className="material-summary packaging-summary">
+              <div><span>Упаковка</span><strong>{quantity.format(record.materials.packagingQuantity)} шт</strong></div>
+              <div><span>Ціна за шт</span><strong>{formatMoney(record.materials.packagingPrice)}</strong></div>
+              <div><span>Вартість упаковки</span><strong>{formatMoney(record.materials.packagingCost)}</strong></div>
+            </div>
+          ) : <p className="empty-copy">Немає кількості упаковки.</p>}
         </section>
         <section className="panel-section management-section">
           <label className="field-label" htmlFor="detail-status">Статус</label>
@@ -154,6 +338,7 @@ function AddCalculationPanel({ onClose, onAdd }) {
         retailPrice: numeric("retailPrice"),
       },
       costItems: [],
+      materials: null,
     });
   }
 
@@ -193,6 +378,8 @@ function App() {
   const [loadError, setLoadError] = useState("");
   const [management, setManagement] = useState(readManagement);
   const [manualRecords, setManualRecords] = useState(readManualRecords);
+  const [importMessage, setImportMessage] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
   const [query, setQuery] = useState("");
   const [clientFilter, setClientFilter] = useState("Усі контрагенти");
   const [statusFilter, setStatusFilter] = useState("Усі статуси");
@@ -282,6 +469,40 @@ function App() {
     setSelectedId(record.id);
   }
 
+  async function importCalculationFiles(event) {
+    const files = Array.from(event.currentTarget.files ?? []);
+    if (!files.length) return;
+
+    setIsImporting(true);
+    setImportMessage("");
+    try {
+      const imported = [];
+      for (const file of files) {
+        if (!/\.xlsx$/i.test(file.name)) {
+          throw new Error(`Підтримуються лише файли .xlsx: ${file.name}`);
+        }
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        imported.push(...parseCalculationWorkbook(file, workbook));
+      }
+
+      setManualRecords((current) => {
+        const importedById = new Map(imported.map((record) => [record.id, record]));
+        const updated = current.map((record) => importedById.get(record.id) ?? record);
+        const existingIds = new Set(updated.map((record) => record.id));
+        return [...updated, ...imported.filter((record) => !existingIds.has(record.id))];
+      });
+      setQuery("");
+      setClientFilter("Усі контрагенти");
+      setStatusFilter("Усі статуси");
+      setImportMessage(`Імпортовано ${imported.length} калькуляцій.`);
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : "Не вдалося імпортувати файл.");
+    } finally {
+      setIsImporting(false);
+      event.currentTarget.value = "";
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -308,9 +529,14 @@ function App() {
             <div><div className="eyebrow">ВІТАЄМО У CALC.DESK</div><h1>Огляд калькуляцій</h1><p>Уся собівартість, прибутковість і робота з контрагентами — в одному місці.</p></div>
             <div className="welcome-actions">
               <button className="primary-button" onClick={() => setIsAdding(true)} aria-label="Додати калькуляцію вручну" title="Додати калькуляцію вручну"><Glyph name="plus" size={17} /> Додати вручну</button>
+              <label className={`secondary-button ${isImporting ? "disabled-button" : ""}`}>
+                <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={importCalculationFiles} disabled={isImporting} hidden />
+                <Glyph name="download" size={17} /> {isImporting ? "Імпортую…" : "Імпорт з Excel"}
+              </label>
               <button className="secondary-button" onClick={() => downloadCsv(filtered)} aria-label="Експортувати CSV" title="Експортувати CSV"><Glyph name="download" size={17} /> Експортувати CSV</button>
             </div>
           </section>
+          {importMessage && <div className={`import-message ${importMessage.startsWith("Імпортовано") ? "import-success" : "import-error"}`}>{importMessage}</div>}
           <section className="metrics-grid" aria-label="Ключові показники">
             <MetricCard label="Калькуляцій у базі" value={records.length} caption={`з ${clients.length} контрагентів`} icon="layers" tone="blue" />
             <MetricCard label="Випуск за період" value={`${quantity.format(totals.volume)} т`} caption="Сумарний обсяг виробництва" icon="box" tone="teal" />
@@ -349,11 +575,13 @@ function App() {
               <select aria-label="Фільтр контрагентів" value={clientFilter} onChange={(event) => updateFilter(setClientFilter, event.target.value)}><option>Усі контрагенти</option>{clients.map((client) => <option key={client}>{client}</option>)}</select>
               <select aria-label="Фільтр статусу" value={statusFilter} onChange={(event) => updateFilter(setStatusFilter, event.target.value)}><option>Усі статуси</option>{STATUSES.map((status) => <option key={status}>{status}</option>)}</select>
             </div>
-            <div className="table-scroll"><table><thead><tr><th>ТОВАР / КАЛЬКУЛЯЦІЯ</th><th>КОНТРАГЕНТ</th><th>ВИПУСК, Т</th><th>ПОВНІ ВИТРАТИ / 1 Т</th><th>ПРИБУТОК / 1 Т</th><th>СТАТУС</th><th aria-label="Нотатка" /></tr></thead>
+            <div className="table-scroll"><table><thead><tr><th>ТОВАР / SKU</th><th>КОНТРАГЕНТ</th><th>СИРОВИНА</th><th>УПАКОВКА</th><th>ВИПУСК, Т</th><th>ПОВНІ ВИТРАТИ / 1 Т</th><th>ПРИБУТОК / 1 Т</th><th>СТАТУС</th><th aria-label="Нотатка" /></tr></thead>
               <tbody>{visibleRows.map(({ record, management: itemManagement }) => (
                 <tr key={record.id} onClick={() => setSelectedId(record.id)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && setSelectedId(record.id)}>
                   <td><div className="product-cell"><strong>{record.product}</strong><span>{record.period || record.source}</span></div></td>
                   <td><span className="table-client"><span className="client-mark tiny">{record.client.slice(0, 1)}</span>{record.client}</span></td>
+                  <td className="number-cell">{record.materials?.rawQuantityKg != null ? <><strong>{decimal.format(record.materials.rawQuantityKg)} кг</strong><span className="material-price">{formatMoney(record.materials.rawCost)} · {formatMoney(record.materials.rawPricePerKg)} / кг</span></> : "—"}</td>
+                  <td className="number-cell">{record.materials?.packagingQuantity != null ? <><strong>{quantity.format(record.materials.packagingQuantity)} шт</strong><span className="material-price">{formatMoney(record.materials.packagingCost)} · {formatMoney(record.materials.packagingPrice)} / шт</span></> : "—"}</td>
                   <td className="number-cell">{quantity.format(record.metrics.volume)}</td>
                   <td className="number-cell">{amount.format(record.metrics.fullCost)} ₴</td>
                   <td className={`number-cell ${record.metrics.profit < 0 ? "negative" : "positive"}`}>{record.metrics.profit < 0 ? "−" : "+"}{amount.format(Math.abs(record.metrics.profit))} ₴</td>
@@ -361,7 +589,7 @@ function App() {
                   <td>{itemManagement.note && <span className="note-indicator" title="Є нотатка"><Glyph name="note" size={15} /></span>}</td>
                 </tr>
               ))}
-              {!visibleRows.length && <tr><td className="empty-state" colSpan="7"><span className="empty-search"><Glyph name="search" size={21} /></span><strong>Нічого не знайдено</strong><span>Змініть пошуковий запит або фільтри.</span></td></tr>}
+              {!visibleRows.length && <tr><td className="empty-state" colSpan="9"><span className="empty-search"><Glyph name="search" size={21} /></span><strong>Нічого не знайдено</strong><span>Змініть пошуковий запит або фільтри.</span></td></tr>}
               </tbody></table></div>
             <div className="table-footer"><span>Показано {filtered.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filtered.length)} з {filtered.length}</span><div className="pagination"><button disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>Назад</button><span>Сторінка {page} з {pageCount}</span><button disabled={page >= pageCount} onClick={() => setPage((current) => current + 1)}>Далі</button></div></div>
           </section>

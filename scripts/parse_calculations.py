@@ -33,6 +33,82 @@ def number(value):
         return None
 
 
+def extract_materials(section):
+    raw_quantity = 0.0
+    raw_cost = 0.0
+    packaging_quantity = 0.0
+    packaging_cost = 0.0
+    current_category = ""
+    current_item = ""
+    pending_item = None
+    items = []
+    has_raw_quantity = False
+    has_packaging_quantity = False
+
+    for row_number, values in section:
+        raw_label = values.get("B", "")
+        label = raw_label.strip()
+        unit = values.get("C", "").strip().lower()
+        amount = number(values.get("D", ""))
+
+        if label.startswith("23 "):
+            current_category = label
+            current_item = ""
+            pending_item = None
+        elif label == "Количество" and amount is not None:
+            is_packaging = "упаков" in current_category.lower()
+            if is_packaging:
+                packaging_quantity += amount
+                has_packaging_quantity = True
+            elif unit == "кг":
+                raw_quantity += amount
+                has_raw_quantity = True
+            if current_item:
+                pending_item = {
+                    "name": current_item,
+                    "type": "packaging" if is_packaging else "raw",
+                    "quantity": amount,
+                    "unit": "шт" if is_packaging else "кг",
+                    "price": None,
+                    "cost": None,
+                }
+        elif label == "Цена" and amount is not None and pending_item:
+            pending_item["price"] = amount
+        elif label == "Сумма" and amount is not None:
+            is_packaging = "упаков" in current_category.lower()
+            if is_packaging:
+                packaging_cost += amount
+            elif is_material_category(current_category):
+                raw_cost += amount
+            if pending_item:
+                pending_item["cost"] = amount
+                items.append(pending_item)
+                pending_item = None
+        elif label and not label.startswith("24 ") and not label.startswith("Показник") and not label.startswith("23 "):
+            current_item = label
+
+    return {
+        "items": items,
+        "rawQuantityKg": raw_quantity if has_raw_quantity else None,
+        "rawCost": raw_cost if raw_cost else None,
+        "rawPricePerKg": raw_cost / raw_quantity if has_raw_quantity and raw_quantity else None,
+        "packagingQuantity": packaging_quantity if has_packaging_quantity else None,
+        "packagingUnit": "шт",
+        "packagingCost": packaging_cost if packaging_cost else None,
+        "packagingPrice": packaging_cost / packaging_quantity if has_packaging_quantity and packaging_quantity else None,
+    }
+
+
+def is_material_category(label):
+    category = label.lower()
+    excluded = (
+        "упаков", "оплата праці", "заробіт", "єсв", "подат",
+        "газ", "електро", "амортизац", "енерг", "паливо",
+        "витрати на збут", "адміністратив",
+    )
+    return label.startswith("23 ") and not any(term in category for term in excluded)
+
+
 def read_workbook(path):
     with zipfile.ZipFile(path) as workbook:
         shared_strings = []
@@ -95,6 +171,7 @@ def read_workbook(path):
             "period": period,
             "source": path.name,
             "metrics": metrics,
+            "materials": extract_materials(section),
             "costItems": sorted(cost_items, key=lambda item: abs(item["value"]), reverse=True)[:8],
         })
     return records
