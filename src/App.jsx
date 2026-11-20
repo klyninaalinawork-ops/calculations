@@ -23,11 +23,17 @@ function readManagement() {
   return saved ? JSON.parse(saved) : {};
 }
 
+function readManualRecords() {
+  const saved = localStorage.getItem("calculations-manual");
+  return saved ? JSON.parse(saved) : [];
+}
+
 function Glyph({ name, size = 18 }) {
   const paths = {
     grid: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
     search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4 4" /></>,
     download: <><path d="M12 3v12m0 0 4-4m-4 4-4-4" /><path d="M5 17v4h14v-4" /></>,
+    plus: <><path d="M12 5v14M5 12h14" /></>,
     box: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 8 9 5 9-5M3 8v9l9 5 9-5V8M12 13v9" /></>,
     trend: <><path d="m3 17 6-6 4 4 8-9" /><path d="M15 6h6v6" /></>,
     layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5M3 16l9 5 9-5" /></>,
@@ -108,7 +114,7 @@ function DetailsPanel({ item, onClose, updateManagement }) {
           <div className="section-title">Основні статті витрат <span>на 1 т</span></div>
           {record.costItems.length ? record.costItems.map((cost) => (
             <div className="cost-line" key={cost.label}><span>{cost.label.replace(/^\d+\s*/, "")}</span><strong>{formatMoney(cost.value)}</strong></div>
-          )) : <p className="empty-copy">У файлі немає деталізації статей витрат.</p>}
+          )          ) : <p className="empty-copy">Немає деталізації статей витрат.</p>}
         </section>
         <section className="panel-section management-section">
           <label className="field-label" htmlFor="detail-status">Статус</label>
@@ -125,16 +131,75 @@ function DetailsPanel({ item, onClose, updateManagement }) {
   );
 }
 
+function AddCalculationPanel({ onClose, onAdd }) {
+  function submitCalculation(event) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const text = (name) => String(formData.get(name) ?? "").trim();
+    const numeric = (name) => Number(formData.get(name));
+    onAdd({
+      id: `manual-${crypto.randomUUID()}`,
+      client: text("client"),
+      entity: text("entity"),
+      product: text("product"),
+      period: text("period"),
+      source: "Додано вручну",
+      metrics: {
+        volume: numeric("volume"),
+        productionCost: numeric("productionCost"),
+        fullCost: numeric("fullCost"),
+        profit: numeric("profit"),
+        margin: numeric("margin"),
+        wholesalePrice: numeric("wholesalePrice"),
+        retailPrice: numeric("retailPrice"),
+      },
+      costItems: [],
+    });
+  }
+
+  return (
+    <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <aside className="details-panel add-panel" aria-label="Додати калькуляцію">
+        <div className="panel-top">
+          <div><div className="eyebrow">НОВИЙ ЗАПИС</div><h2 className="add-title">Додати калькуляцію</h2></div>
+          <button className="icon-button" onClick={onClose} aria-label="Закрити"><Glyph name="close" /></button>
+        </div>
+        <p className="add-description">Запис збережеться у цьому браузері та з’явиться в загальному переліку й експорті CSV.</p>
+        <form className="add-form" onSubmit={submitCalculation}>
+          <label className="form-field">Контрагент<input name="client" required autoFocus /></label>
+          <label className="form-field"><span className="form-field-heading">Юридична особа <span>(необов’язково)</span></span><input name="entity" /></label>
+          <label className="form-field form-field-wide">Товар<input name="product" required /></label>
+          <label className="form-field form-field-wide"><span className="form-field-heading">Період <span>(необов’язково)</span></span><input name="period" placeholder="Наприклад, жовтень 2026" /></label>
+          <div className="form-divider">Показники калькуляції</div>
+          <label className="form-field">Випуск, т<input name="volume" type="number" min="0" step="any" required /></label>
+          <label className="form-field">Виробнича собівартість, грн<input name="productionCost" type="number" min="0" step="any" required /></label>
+          <label className="form-field">Повні витрати, грн<input name="fullCost" type="number" min="0" step="any" required /></label>
+          <label className="form-field">Прибуток / збиток, грн<input name="profit" type="number" step="any" required /></label>
+          <label className="form-field">Рентабельність, %<input name="margin" type="number" step="any" required /></label>
+          <label className="form-field">Оптова вартість, грн<input name="wholesalePrice" type="number" min="0" step="any" required /></label>
+          <label className="form-field">Відпускна вартість, грн<input name="retailPrice" type="number" min="0" step="any" required /></label>
+          <div className="add-form-actions">
+            <button type="button" className="secondary-button" onClick={onClose}>Скасувати</button>
+            <button type="submit" className="primary-button"><Glyph name="plus" size={16} /> Додати калькуляцію</button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
 function App() {
   const [sourceRecords, setSourceRecords] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [management, setManagement] = useState(readManagement);
+  const [manualRecords, setManualRecords] = useState(readManualRecords);
   const [query, setQuery] = useState("");
   const [clientFilter, setClientFilter] = useState("Усі контрагенти");
   const [statusFilter, setStatusFilter] = useState("Усі статуси");
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState(null);
-  const records = sourceRecords ?? EMPTY_RECORDS;
+  const [isAdding, setIsAdding] = useState(false);
+  const records = useMemo(() => sourceRecords ? [...sourceRecords, ...manualRecords] : EMPTY_RECORDS, [manualRecords, sourceRecords]);
   const pageSize = 10;
 
   useEffect(() => {
@@ -153,6 +218,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem("calculations-management", JSON.stringify(management));
   }, [management]);
+
+  useEffect(() => {
+    localStorage.setItem("calculations-manual", JSON.stringify(manualRecords));
+  }, [manualRecords]);
 
   const clients = useMemo(() => [...new Set(records.map((record) => record.client))].sort((a, b) => a.localeCompare(b, "uk")), [records]);
   const managedRecords = useMemo(() => records.map((record) => ({
@@ -203,6 +272,16 @@ function App() {
     setPage(1);
   }
 
+  function addManualRecord(record) {
+    setManualRecords((current) => [...current, record]);
+    setQuery("");
+    setClientFilter("Усі контрагенти");
+    setStatusFilter("Усі статуси");
+    setPage(Math.ceil((records.length + 1) / pageSize));
+    setIsAdding(false);
+    setSelectedId(record.id);
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -227,7 +306,10 @@ function App() {
         <div className="page-content">
           <section className="welcome-row">
             <div><div className="eyebrow">ВІТАЄМО У CALC.DESK</div><h1>Огляд калькуляцій</h1><p>Уся собівартість, прибутковість і робота з контрагентами — в одному місці.</p></div>
-            <button className="primary-button" onClick={() => downloadCsv(filtered)}><Glyph name="download" size={17} /> Експортувати CSV</button>
+            <div className="welcome-actions">
+              <button className="primary-button" onClick={() => setIsAdding(true)} aria-label="Додати калькуляцію вручну" title="Додати калькуляцію вручну"><Glyph name="plus" size={17} /> Додати вручну</button>
+              <button className="secondary-button" onClick={() => downloadCsv(filtered)} aria-label="Експортувати CSV" title="Експортувати CSV"><Glyph name="download" size={17} /> Експортувати CSV</button>
+            </div>
           </section>
           <section className="metrics-grid" aria-label="Ключові показники">
             <MetricCard label="Калькуляцій у базі" value={records.length} caption={`з ${clients.length} контрагентів`} icon="layers" tone="blue" />
@@ -287,6 +369,7 @@ function App() {
         </div>
       </main>
       <DetailsPanel item={selected} onClose={() => setSelectedId(null)} updateManagement={updateManagement} />
+      {isAdding && <AddCalculationPanel onClose={() => setIsAdding(false)} onAdd={addManualRecord} />}
     </div>
   );
 }

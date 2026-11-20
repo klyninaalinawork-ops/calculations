@@ -54,12 +54,15 @@ button { color: inherit; }
 .avatar { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 50%; background: #eaf0ff; color: #5375d9; font-size: 12px; font-weight: 700; }
 .page-content { max-width: 1500px; margin: 0 auto; padding: 36px 43px 20px; }
 .welcome-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 27px; }
+.welcome-actions { display: flex; align-items: center; gap: 9px; }
 .eyebrow { color: #8190a4; font-size: 10px; font-weight: 700; letter-spacing: 1.15px; }
 h1, h2, p { margin: 0; }
 h1 { margin-top: 7px; color: #253148; font: 700 25px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; letter-spacing: -.65px; }
 .welcome-row p { margin-top: 6px; color: #8a96a7; font-size: 12px; }
 .primary-button { height: 39px; display: inline-flex; align-items: center; gap: 9px; padding: 0 15px; border: 0; border-radius: 8px; background: #4a70df; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: 0 3px 8px #466edc2b; }
 .primary-button:hover { background: #3d62d1; }
+.secondary-button { height: 39px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 13px; border: 1px solid #e4e9f0; border-radius: 8px; background: #fff; color: #66748a; font-size: 12px; font-weight: 600; cursor: pointer; }
+.secondary-button:hover { background: #f8f9fb; }
 .metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; }
 .metric-card, .surface { border: 1px solid #e9edf2; border-radius: 11px; background: #fff; box-shadow: 0 2px 6px #23344b05; }
 .metric-card { min-height: 137px; padding: 15px 16px 13px; }
@@ -173,6 +176,20 @@ tbody tr[tabindex]:hover { background: #fafbfe; }
 .save-hint { display: flex; align-items: center; gap: 7px; margin-top: 8px; color: #9ba6b3; font-size: 9px; }
 .save-dot { width: 6px; height: 6px; }
 .source-note { display: flex; align-items: center; gap: 7px; margin-top: 20px; color: #9ba5b3; font-size: 9px; }
+.add-panel { width: min(540px, 100%); }
+.add-title { margin-top: 6px; color: #2b374b; font-size: 18px; }
+.add-description { margin-top: 14px; color: #8a96a7; font-size: 11px; line-height: 1.5; }
+.add-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 12px; margin-top: 22px; }
+.form-field { display: flex; flex-direction: column; gap: 6px; color: #637087; font-size: 10px; font-weight: 600; }
+.form-field-heading { color: #637087; }
+.form-field-heading span { color: #9aa5b4; font-weight: 400; }
+.form-field input { width: 100%; height: 36px; padding: 0 10px; border: 1px solid #e7ebf0; border-radius: 7px; outline: 0; color: #536177; font-size: 11px; font-weight: 400; }
+.form-field input:focus { border-color: #93a9ed; box-shadow: 0 0 0 3px #5679e311; }
+.form-field input::placeholder { color: #abb4c0; }
+.form-field-wide, .form-divider, .add-form-actions { grid-column: 1 / -1; }
+.form-divider { padding-top: 5px; border-top: 1px solid #edf0f4; color: #4a576b; font-size: 10px; font-weight: 700; }
+.add-form-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 5px; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.add-form-actions .primary-button, .add-form-actions .secondary-button { height: 36px; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slide-in { from { transform: translateX(20px); opacity: .7; } to { transform: translateX(0); opacity: 1; } }
 
@@ -213,8 +230,9 @@ tbody tr[tabindex]:hover { background: #fafbfe; }
   .welcome-row { align-items: flex-start; margin-bottom: 18px; }
   .welcome-row h1 { font-size: 20px; }
   .welcome-row p { max-width: 250px; font-size: 10px; line-height: 1.5; }
-  .primary-button { width: 36px; height: 36px; justify-content: center; padding: 0; overflow: hidden; font-size: 0; }
-  .primary-button svg { flex: 0 0 auto; }
+  .welcome-actions { gap: 6px; }
+  .welcome-actions .primary-button, .welcome-actions .secondary-button { width: 36px; height: 36px; justify-content: center; padding: 0; overflow: hidden; font-size: 0; }
+  .welcome-actions svg { flex: 0 0 auto; }
   .metrics-grid { gap: 8px; }
   .metric-card { min-height: 123px; padding: 11px; }
   .metric-icon { width: 27px; height: 27px; margin-bottom: 8px; }
@@ -240,4 +258,8 @@ tbody tr[tabindex]:hover { background: #fafbfe; }
   .page-footer { gap: 8px; font-size: 8px; }
   .page-footer > span:last-child { text-align: right; }
   .details-panel { padding: 20px 17px; }
+  .add-form { grid-template-columns: 1fr; }
+  .form-field-wide, .form-divider, .add-form-actions { grid-column: auto; }
+  .add-form-actions { justify-content: stretch; }
+  .add-form-actions button { flex: 1; }
 }
